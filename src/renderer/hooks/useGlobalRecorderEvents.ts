@@ -1,10 +1,15 @@
-import { useEffect, useRef } from 'react';
-import { useSessionStore } from '../stores/session.store';
-import { useTranscriptionStore } from '../stores/transcription.store';
-import { useVisualIndexStore } from '../stores/visual-index.store';
-import { useCopilotStore } from '../stores/copilot.store';
-import { getElectronAPI } from '../api/ipc';
-import type { RecorderEvent, TranscriptEvent, VisualIndexEvent } from '../../shared/types/ipc.types';
+import { useEffect, useRef } from "react";
+import { useSessionStore } from "../stores/session.store";
+import { useTranscriptionStore } from "../stores/transcription.store";
+import { useVisualIndexStore } from "../stores/visual-index.store";
+import { useCopilotStore } from "../stores/copilot.store";
+import { getElectronAPI } from "../api/ipc";
+import type {
+  RecorderEvent,
+  TranscriptEvent,
+  VisualIndexEvent,
+} from "../../shared/types/ipc.types";
+import { translateToSpanish } from "../lib/translate";
 
 /**
  * Global hook to listen for recorder events from the main process.
@@ -44,24 +49,41 @@ export function useGlobalRecorderEvents() {
       const visualIndex = visualIndexStoreRef.current;
 
       switch (event.event) {
-        case 'recording:started':
-          session.setStatus('recording');
+        case "recording:started":
+          session.setStatus("recording");
           break;
 
-        case 'recording:stopped':
-          session.setStatus('processing');
+        case "recording:stopped":
+          session.setStatus("processing");
           break;
 
-        case 'recording:error':
+        case "recording:error":
           session.setError(String(event.data));
-          session.setStatus('idle');
+          session.setStatus("idle");
           break;
 
-        case 'transcript':
+        case "transcript":
           if (event.data && transcription.enabled) {
             const transcript = event.data as TranscriptEvent;
             if (transcript.isFinal) {
               transcription.finalizePending(transcript.source, transcript.text);
+
+              // Translate "Them" (system audio) transcripts to Spanish
+              if (transcript.source === "system_audio") {
+                // Capture the id of the item we just added
+                const items = useTranscriptionStore.getState().items;
+                const addedItem = items[items.length - 1];
+                if (addedItem) {
+                  translateToSpanish(transcript.text).then((translated) => {
+                    // Only set if translation differs from original (avoids redundancy)
+                    if (translated && translated !== transcript.text) {
+                      useTranscriptionStore
+                        .getState()
+                        .setTranslation(addedItem.id, translated);
+                    }
+                  });
+                }
+              }
             } else {
               transcription.updatePending(transcript.source, transcript.text);
             }
@@ -71,26 +93,37 @@ export function useGlobalRecorderEvents() {
             if (transcript.isFinal && currentApi) {
               // Forward to copilot if active
               if (useCopilotStore.getState().isCallActive) {
-                const channel: 'me' | 'them' = transcript.source === 'mic' ? 'me' : 'them';
-                currentApi.copilot.sendTranscript(channel, {
-                  text: transcript.text,
-                  is_final: true,
-                  start: transcript.start,
-                  end: transcript.end,
-                }).catch((err: Error) => {
-                  console.warn('[GlobalRecorderEvents] Error forwarding transcript to copilot:', err);
-                });
+                const channel: "me" | "them" =
+                  transcript.source === "mic" ? "me" : "them";
+                currentApi.copilot
+                  .sendTranscript(channel, {
+                    text: transcript.text,
+                    is_final: true,
+                    start: transcript.start,
+                    end: transcript.end,
+                  })
+                  .catch((err: Error) => {
+                    console.warn(
+                      "[GlobalRecorderEvents] Error forwarding transcript to copilot:",
+                      err,
+                    );
+                  });
               }
 
               // Forward to live assist service for real-time analysis
-              currentApi.liveAssist.addTranscript(transcript.text, transcript.source).catch((err: Error) => {
-                console.warn('[GlobalRecorderEvents] Error forwarding transcript to live assist:', err);
-              });
+              currentApi.liveAssist
+                .addTranscript(transcript.text, transcript.source)
+                .catch((err: Error) => {
+                  console.warn(
+                    "[GlobalRecorderEvents] Error forwarding transcript to live assist:",
+                    err,
+                  );
+                });
             }
           }
           break;
 
-        case 'visual_index':
+        case "visual_index":
           if (event.data) {
             const visualData = event.data as VisualIndexEvent;
             visualIndex.addItem({
@@ -104,43 +137,61 @@ export function useGlobalRecorderEvents() {
             // Forward to live assist for real-time analysis
             const currentApi = getElectronAPI();
             if (currentApi) {
-              currentApi.liveAssist.addVisualIndex(visualData.text).catch((err: Error) => {
-                console.warn('[GlobalRecorderEvents] Error forwarding visual index to live assist:', err);
-              });
+              currentApi.liveAssist
+                .addVisualIndex(visualData.text)
+                .catch((err: Error) => {
+                  console.warn(
+                    "[GlobalRecorderEvents] Error forwarding visual index to live assist:",
+                    err,
+                  );
+                });
             }
 
             // Save to database for durable storage
             const currentSession = useSessionStore.getState();
-            if (currentSession.recordingId && currentSession.sessionId && currentApi) {
+            if (
+              currentSession.recordingId &&
+              currentSession.sessionId &&
+              currentApi
+            ) {
               // Convert epoch ms timestamps to seconds from call start
-              const callStartSec = currentSession.startTime ? currentSession.startTime / 1000 : visualData.start;
-              currentApi.visualIndex.saveItem({
-                recordingId: currentSession.recordingId,
-                sessionId: currentSession.sessionId,
-                text: visualData.text,
-                startTime: Math.max(0, visualData.start - callStartSec),
-                endTime: Math.max(0, visualData.end - callStartSec),
-                rtstreamId: visualData.rtstreamId,
-                rtstreamName: visualData.rtstreamName,
-              }).catch((err: Error) => {
-                console.warn('[GlobalRecorderEvents] Error saving visual index item:', err);
-              });
+              const callStartSec = currentSession.startTime
+                ? currentSession.startTime / 1000
+                : visualData.start;
+              currentApi.visualIndex
+                .saveItem({
+                  recordingId: currentSession.recordingId,
+                  sessionId: currentSession.sessionId,
+                  text: visualData.text,
+                  startTime: Math.max(0, visualData.start - callStartSec),
+                  endTime: Math.max(0, visualData.end - callStartSec),
+                  rtstreamId: visualData.rtstreamId,
+                  rtstreamName: visualData.rtstreamName,
+                })
+                .catch((err: Error) => {
+                  console.warn(
+                    "[GlobalRecorderEvents] Error saving visual index item:",
+                    err,
+                  );
+                });
             }
           }
           break;
 
-        case 'upload:progress':
-          console.log('[GlobalRecorderEvents] Upload progress:', event.data);
+        case "upload:progress":
+          console.log("[GlobalRecorderEvents] Upload progress:", event.data);
           break;
 
-        case 'upload:complete':
+        case "upload:complete":
           // Don't reset session here - let stopRecording() handle the transition
           // after copilot summary generation completes
-          console.log('[GlobalRecorderEvents] Upload complete (stopRecording will handle state transition)');
+          console.log(
+            "[GlobalRecorderEvents] Upload complete (stopRecording will handle state transition)",
+          );
           break;
 
-        case 'error':
-          console.error('[GlobalRecorderEvents] Error:', event.data);
+        case "error":
+          console.error("[GlobalRecorderEvents] Error:", event.data);
           session.setError(String(event.data));
           break;
       }
@@ -148,7 +199,7 @@ export function useGlobalRecorderEvents() {
 
     // Only unsubscribe when the entire app unmounts (which shouldn't happen during normal use)
     return () => {
-      console.log('[Global] Cleaning up recorder event listener');
+      console.log("[Global] Cleaning up recorder event listener");
       unsubscribe();
     };
   }, []); // Empty deps - only run once on mount

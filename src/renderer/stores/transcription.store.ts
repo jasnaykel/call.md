@@ -1,9 +1,10 @@
-import { create } from 'zustand';
+import { create } from "zustand";
 
 export interface TranscriptItem {
   id: string;
   text: string;
-  source: 'mic' | 'system_audio';
+  translation?: string;
+  source: "mic" | "system_audio";
   isFinal: boolean;
   timestamp: number;
 }
@@ -15,9 +16,10 @@ interface TranscriptionState {
   pendingSystemAudio: string;
 
   // Actions
-  addItem: (item: Omit<TranscriptItem, 'id' | 'timestamp'>) => void;
-  updatePending: (source: 'mic' | 'system_audio', text: string) => void;
-  finalizePending: (source: 'mic' | 'system_audio', text: string) => void;
+  addItem: (item: Omit<TranscriptItem, "id" | "timestamp">) => void;
+  updatePending: (source: "mic" | "system_audio", text: string) => void;
+  finalizePending: (source: "mic" | "system_audio", text: string) => void;
+  setTranslation: (id: string, translation: string) => void;
   setEnabled: (enabled: boolean) => void;
   clear: () => void;
 }
@@ -27,8 +29,8 @@ let itemIdCounter = 0;
 export const useTranscriptionStore = create<TranscriptionState>((set) => ({
   items: [],
   enabled: true,
-  pendingMic: '',
-  pendingSystemAudio: '',
+  pendingMic: "",
+  pendingSystemAudio: "",
 
   addItem: (item) => {
     const newItem: TranscriptItem = {
@@ -43,7 +45,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set) => ({
   },
 
   updatePending: (source, text) => {
-    if (source === 'mic') {
+    if (source === "mic") {
       set({ pendingMic: text });
     } else {
       set({ pendingSystemAudio: text });
@@ -61,7 +63,15 @@ export const useTranscriptionStore = create<TranscriptionState>((set) => ({
 
     set((state) => ({
       items: [...state.items, newItem],
-      ...(source === 'mic' ? { pendingMic: '' } : { pendingSystemAudio: '' }),
+      ...(source === "mic" ? { pendingMic: "" } : { pendingSystemAudio: "" }),
+    }));
+  },
+
+  setTranslation: (id, translation) => {
+    set((state) => ({
+      items: state.items.map((item) =>
+        item.id === id ? { ...item, translation } : item,
+      ),
     }));
   },
 
@@ -70,8 +80,8 @@ export const useTranscriptionStore = create<TranscriptionState>((set) => ({
   clear: () => {
     set({
       items: [],
-      pendingMic: '',
-      pendingSystemAudio: '',
+      pendingMic: "",
+      pendingSystemAudio: "",
     });
   },
 }));
